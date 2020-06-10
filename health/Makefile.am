@@ -45,6 +45,7 @@ dist_healthconfig_DATA = \
     health.d/dockerd.conf \
     health.d/elasticsearch.conf \
     health.d/entropy.conf \
+    health.d/exporting.conf \
     health.d/fping.conf \
     health.d/ioping.conf \
     health.d/fronius.conf \
@@ -99,6 +100,7 @@ dist_healthconfig_DATA = \
     health.d/vernemq.conf \
     health.d/vsphere.conf \
     health.d/web_log.conf \
+    health.d/whoisquery.conf \
     health.d/wmi.conf \
     health.d/x509check.conf \
     health.d/zfs.conf \
