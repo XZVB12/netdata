@@ -157,11 +157,11 @@ PARSER_RC pluginsd_overwrite_action(void *user, RRDHOST *host, struct label *new
 {
     UNUSED(user);
 
-    if (!host->labels) {
-        host->labels = new_labels;
+    if (!host->labels.head) {
+        host->labels.head = new_labels;
     } else {
         rrdhost_rdlock(host);
-        replace_label_list(host, new_labels);
+        replace_label_list(&host->labels, new_labels);
         rrdhost_unlock(host);
     }
     return PARSER_RC_OK;
@@ -274,6 +274,10 @@ PARSER_RC pluginsd_end(char **words, void *user, PLUGINSD_ACTION  *plugins_actio
 PARSER_RC pluginsd_chart(char **words, void *user, PLUGINSD_ACTION  *plugins_action)
 {
     RRDHOST *host = ((PARSER_USER_OBJECT *) user)->host;
+    if (unlikely(!host && !((PARSER_USER_OBJECT *) user)->host_exists)) {
+        debug(D_PLUGINSD, "Ignoring chart belonging to missing or ignored host.");
+        return PARSER_RC_OK;
+    }
 
     char *type = words[1];
     char *name = words[2];
@@ -299,14 +303,17 @@ PARSER_RC pluginsd_chart(char **words, void *user, PLUGINSD_ACTION  *plugins_act
 
     // make sure we have the required variables
     if (unlikely((!type || !*type || !id || !*id))) {
-        error("requested a CHART, without a type.id, on host '%s'. Disabling it.", host->hostname);
+        if (likely(host))
+            error("requested a CHART, without a type.id, on host '%s'. Disabling it.", host->hostname);
+        else
+            error("requested a CHART, without a type.id. Disabling it.");
         ((PARSER_USER_OBJECT *) user)->enabled = 0;
         return PARSER_RC_ERROR;
     }
 
     // parse the name, and make sure it does not include 'type.'
     if (unlikely(name && *name)) {
-        // when data are coming from slaves
+        // when data are streamed from child nodes
         // name will be type.name
         // so we have to remove 'type.' from name too
         size_t len = strlen(type);
@@ -371,6 +378,10 @@ PARSER_RC pluginsd_dimension(char **words, void *user, PLUGINSD_ACTION  *plugins
 
     RRDSET *st = ((PARSER_USER_OBJECT *) user)->st;
     RRDHOST *host = ((PARSER_USER_OBJECT *) user)->host;
+    if (unlikely(!host && !((PARSER_USER_OBJECT *) user)->host_exists)) {
+        debug(D_PLUGINSD, "Ignoring dimension belonging to missing or ignored host.");
+        return PARSER_RC_OK;
+    }
 
     if (unlikely(!id)) {
         error(
@@ -379,7 +390,7 @@ PARSER_RC pluginsd_dimension(char **words, void *user, PLUGINSD_ACTION  *plugins
         goto disable;
     }
 
-    if (unlikely(!st)) {
+    if (unlikely(!st && !((PARSER_USER_OBJECT *) user)->st_exists)) {
         error("requested a DIMENSION, without a CHART, on host '%s'. Disabling it.", host->hostname);
         goto disable;
     }
@@ -401,7 +412,7 @@ PARSER_RC pluginsd_dimension(char **words, void *user, PLUGINSD_ACTION  *plugins
     if (unlikely(!algorithm || !*algorithm))
         algorithm = "absolute";
 
-    if (unlikely(rrdset_flag_check(st, RRDSET_FLAG_DEBUG)))
+    if (unlikely(st && rrdset_flag_check(st, RRDSET_FLAG_DEBUG)))
         debug(
             D_PLUGINSD,
             "creating dimension in chart %s, id='%s', name='%s', algorithm='%s', multiplier=%ld, divisor=%ld, hidden='%s'",
@@ -509,6 +520,11 @@ PARSER_RC pluginsd_disable(char **words, void *user, PLUGINSD_ACTION  *plugins_a
 PARSER_RC pluginsd_label(char **words, void *user, PLUGINSD_ACTION  *plugins_action)
 {
     char *store;
+
+    if (!words[1] || !words[2] || !words[3]) {
+        error("Ignoring malformed or empty LABEL command.");
+        return PARSER_RC_OK;
+    }
     if (!words[4])
         store = words[3];
     else {
@@ -561,6 +577,98 @@ PARSER_RC pluginsd_overwrite(char **words, void *user, PLUGINSD_ACTION  *plugins
     return PARSER_RC_OK;
 }
 
+PARSER_RC pluginsd_guid(char **words, void *user, PLUGINSD_ACTION *plugins_action)
+{
+    char *uuid_str = words[1];
+    uuid_t uuid;
+
+    if (unlikely(!uuid_str)) {
+        error("requested a GUID, without a uuid.");
+        return PARSER_RC_ERROR;
+    }
+    if (unlikely(strlen(uuid_str) != GUID_LEN || uuid_parse(uuid_str, uuid) == -1)) {
+        error("requested a GUID, without a valid uuid string.");
+        return PARSER_RC_ERROR;
+    }
+
+    debug(D_PLUGINSD, "Parsed uuid=%s", uuid_str);
+    if (plugins_action->guid_action) {
+        return plugins_action->guid_action(user, &uuid);
+    }
+
+    return PARSER_RC_OK;
+}
+
+PARSER_RC pluginsd_context(char **words, void *user, PLUGINSD_ACTION *plugins_action)
+{
+    char *uuid_str = words[1];
+    uuid_t uuid;
+
+    if (unlikely(!uuid_str)) {
+        error("requested a CONTEXT, without a uuid.");
+        return PARSER_RC_ERROR;
+    }
+    if (unlikely(strlen(uuid_str) != GUID_LEN || uuid_parse(uuid_str, uuid) == -1)) {
+        error("requested a CONTEXT, without a valid uuid string.");
+        return PARSER_RC_ERROR;
+    }
+
+    debug(D_PLUGINSD, "Parsed uuid=%s", uuid_str);
+    if (plugins_action->context_action) {
+        return plugins_action->context_action(user, &uuid);
+    }
+
+    return PARSER_RC_OK;
+}
+
+PARSER_RC pluginsd_tombstone(char **words, void *user, PLUGINSD_ACTION *plugins_action)
+{
+    char *uuid_str = words[1];
+    uuid_t uuid;
+
+    if (unlikely(!uuid_str)) {
+        error("requested a TOMBSTONE, without a uuid.");
+        return PARSER_RC_ERROR;
+    }
+    if (unlikely(strlen(uuid_str) != GUID_LEN || uuid_parse(uuid_str, uuid) == -1)) {
+        error("requested a TOMBSTONE, without a valid uuid string.");
+        return PARSER_RC_ERROR;
+    }
+
+    debug(D_PLUGINSD, "Parsed uuid=%s", uuid_str);
+    if (plugins_action->tombstone_action) {
+        return plugins_action->tombstone_action(user, &uuid);
+    }
+
+    return PARSER_RC_OK;
+}
+
+PARSER_RC metalog_pluginsd_host(char **words, void *user, PLUGINSD_ACTION  *plugins_action)
+{
+    char *machine_guid = words[1];
+    char *hostname = words[2];
+    char *registry_hostname = words[3];
+    char *update_every_s = words[4];
+    char *os = words[5];
+    char *timezone = words[6];
+    char *tags = words[7];
+
+    int update_every = 1;
+    if (likely(update_every_s && *update_every_s))
+        update_every = str2i(update_every_s);
+    if (unlikely(!update_every))
+        update_every = 1;
+
+    debug(D_PLUGINSD, "HOST PARSED: guid=%s, hostname=%s, reg_host=%s, update=%d, os=%s, timezone=%s, tags=%s",
+         machine_guid, hostname, registry_hostname, update_every, os, timezone, tags);
+
+    if (plugins_action->host_action) {
+        return plugins_action->host_action(
+            user, machine_guid, hostname, registry_hostname, update_every, os, timezone, tags);
+    }
+
+    return PARSER_RC_OK;
+}
 
 // New plugins.d parser
 
@@ -628,4 +736,3 @@ inline size_t pluginsd_process(RRDHOST *host, struct plugind *cd, FILE *fp, int 
 
     return count;
 }
-

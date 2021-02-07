@@ -508,6 +508,7 @@ struct file_descriptor {
 static int
         all_files_len = 0,
         all_files_size = 0;
+        long double currentmaxfds = 0;
 
 // ----------------------------------------------------------------------------
 // read users and groups from files
@@ -535,7 +536,7 @@ enum user_or_group_id_type {
 struct user_or_group_ids{
     enum user_or_group_id_type type;
 
-    avl_tree index;
+    avl_tree_type index;
     struct user_or_group_id *root;
 
     char filename[FILENAME_MAX + 1];
@@ -1691,7 +1692,7 @@ int file_descriptor_compare(void* a, void* b) {
 
 // int file_descriptor_iterator(avl *a) { if(a) {}; return 0; }
 
-avl_tree all_files_index = {
+avl_tree_type all_files_index = {
         NULL,
         file_descriptor_compare
 };
@@ -2451,7 +2452,8 @@ static inline void link_all_processes_to_their_parents(void) {
         p->parent = NULL;
 
         if(unlikely(!p->ppid)) {
-            p->parent = NULL;
+            //unnecessary code from apps_plugin.c
+            //p->parent = NULL;
             continue;
         }
 
@@ -2997,6 +2999,7 @@ static inline void aggregate_pid_fds_on_targets(struct pid_stat *p) {
     reallocate_target_fds(u);
     reallocate_target_fds(g);
 
+    long double currentfds = 0;
     size_t c, size = p->fds_size;
     struct pid_fd *fds = p->fds;
     for(c = 0; c < size ;c++) {
@@ -3005,10 +3008,15 @@ static inline void aggregate_pid_fds_on_targets(struct pid_stat *p) {
         if(likely(fd <= 0 || fd >= all_files_size))
             continue;
 
+        currentfds++;
+
         aggregate_fd_on_target(fd, w);
         aggregate_fd_on_target(fd, u);
         aggregate_fd_on_target(fd, g);
     }
+
+    if (currentfds >= currentmaxfds)
+        currentmaxfds = currentfds;
 }
 
 static inline void aggregate_pid_on_target(struct target *w, struct pid_stat *p, struct target *o) {
@@ -3606,6 +3614,10 @@ static void send_collected_data_to_netdata(struct target *root, const char *type
             if (unlikely(w->exposed && w->processes))
                 send_SET(w->name, w->openfiles);
         }
+        if (!strcmp("apps", type)){
+            kernel_uint_t usedfdpercentage = (kernel_uint_t) ((currentmaxfds * 100) / sysconf(_SC_OPEN_MAX));
+            fprintf(stdout, "VARIABLE fdperc = " KERNEL_UINT_FORMAT "\n", usedfdpercentage);
+        }
         send_END();
 
         send_BEGIN(type, "sockets", dt);
@@ -3655,13 +3667,13 @@ static void send_charts_updates_to_netdata(struct target *root, const char *type
                 debug_log_int("%s just added - regenerating charts.", w->name);
         }
     }
-
+ 
     // nothing more to show
     if(!newly_added && show_guest_time == show_guest_time_old) return;
 
     // we have something new to show
     // update the charts
-    fprintf(stdout, "CHART %s.cpu '' '%s CPU Time (%d%% = %d core%s)' 'percentage' cpu %s.cpu stacked 20001 %d\n", type, title, (processors * 100), processors, (processors>1)?"s":"", type, update_every);
+    fprintf(stdout, "CHART %s.cpu '' '%s CPU Time (100%% = 1 core)' 'percentage' cpu %s.cpu stacked 20001 %d\n", type, title, type, update_every);
     for (w = root; w ; w = w->next) {
         if(unlikely(w->exposed))
             fprintf(stdout, "DIMENSION %s '' absolute 1 %llu %s\n", w->name, time_factor * RATES_DETAIL / 100, w->hidden ? "hidden" : "");
@@ -3717,20 +3729,20 @@ static void send_charts_updates_to_netdata(struct target *root, const char *type
     }
 #endif
 
-    fprintf(stdout, "CHART %s.cpu_user '' '%s CPU User Time (%d%% = %d core%s)' 'percentage' cpu %s.cpu_user stacked 20020 %d\n", type, title, (processors * 100), processors, (processors>1)?"s":"", type, update_every);
+    fprintf(stdout, "CHART %s.cpu_user '' '%s CPU User Time (100%% = 1 core)' 'percentage' cpu %s.cpu_user stacked 20020 %d\n", type, title, type, update_every);
     for (w = root; w ; w = w->next) {
         if(unlikely(w->exposed))
             fprintf(stdout, "DIMENSION %s '' absolute 1 %llu\n", w->name, time_factor * RATES_DETAIL / 100LLU);
     }
 
-    fprintf(stdout, "CHART %s.cpu_system '' '%s CPU System Time (%d%% = %d core%s)' 'percentage' cpu %s.cpu_system stacked 20021 %d\n", type, title, (processors * 100), processors, (processors>1)?"s":"", type, update_every);
+    fprintf(stdout, "CHART %s.cpu_system '' '%s CPU System Time (100%% = 1 core)' 'percentage' cpu %s.cpu_system stacked 20021 %d\n", type, title, type, update_every);
     for (w = root; w ; w = w->next) {
         if(unlikely(w->exposed))
             fprintf(stdout, "DIMENSION %s '' absolute 1 %llu\n", w->name, time_factor * RATES_DETAIL / 100LLU);
     }
 
     if(show_guest_time) {
-        fprintf(stdout, "CHART %s.cpu_guest '' '%s CPU Guest Time (%d%% = %d core%s)' 'percentage' cpu %s.cpu_system stacked 20022 %d\n", type, title, (processors * 100), processors, (processors > 1) ? "s" : "", type, update_every);
+        fprintf(stdout, "CHART %s.cpu_guest '' '%s CPU Guest Time (100%% = 1 core)' 'percentage' cpu %s.cpu_system stacked 20022 %d\n", type, title, type, update_every);
         for (w = root; w; w = w->next) {
             if(unlikely(w->exposed))
                 fprintf(stdout, "DIMENSION %s '' absolute 1 %llu\n", w->name, time_factor * RATES_DETAIL / 100LLU);
@@ -4183,6 +4195,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
 
+        currentmaxfds = 0;
         calculate_netdata_statistics();
         normalize_utilization(apps_groups_root_target);
 

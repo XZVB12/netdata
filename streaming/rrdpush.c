@@ -144,9 +144,9 @@ static inline int should_send_chart_matching(RRDSET *st) {
     return(rrdset_flag_check(st, RRDSET_FLAG_UPSTREAM_SEND));
 }
 
-int configured_as_master() {
+int configured_as_parent() {
     struct section *section = NULL;
-    int is_master = 0;
+    int is_parent = 0;
 
     appconfig_wrlock(&stream_config);
     for (section = stream_config.first_section; section; section = section->next) {
@@ -154,13 +154,13 @@ int configured_as_master() {
 
         if (uuid_parse(section->name, uuid) != -1 &&
                 appconfig_get_boolean_by_section(section, "enabled", 0)) {
-            is_master = 1;
+            is_parent = 1;
             break;
         }
     }
     appconfig_unlock(&stream_config);
 
-    return is_master;
+    return is_parent;
 }
 
 // checks if the current chart definition has been sent
@@ -334,36 +334,58 @@ void rrdset_done_push(RRDSET *st) {
 
 // labels
 void rrdpush_send_labels(RRDHOST *host) {
-    if (!host->labels || !(host->labels_flag & LABEL_FLAG_UPDATE_STREAM) || (host->labels_flag & LABEL_FLAG_STOP_STREAM))
+    if (!host->labels.head || !(host->labels.labels_flag & LABEL_FLAG_UPDATE_STREAM) || (host->labels.labels_flag & LABEL_FLAG_STOP_STREAM))
         return;
 
     sender_start(host->sender);
     rrdhost_rdlock(host);
-    netdata_rwlock_rdlock(&host->labels_rwlock);
+    netdata_rwlock_rdlock(&host->labels.labels_rwlock);
 
-    struct label *labels = host->labels;
-    while(labels) {
+    struct label *label_i = host->labels.head;
+    while(label_i) {
         buffer_sprintf(host->sender->build
                 , "LABEL \"%s\" = %d %s\n"
-                , labels->key
-                , (int)labels->label_source
-                , labels->value);
+                , label_i->key
+                , (int)label_i->label_source
+                , label_i->value);
 
-        labels = labels->next;
+        label_i = label_i->next;
     }
 
     buffer_sprintf(host->sender->build
             , "OVERWRITE %s\n", "labels");
 
-    netdata_rwlock_unlock(&host->labels_rwlock);
+    netdata_rwlock_unlock(&host->labels.labels_rwlock);
     rrdhost_unlock(host);
     sender_commit(host->sender);
 
     if(host->rrdpush_sender_pipe[PIPE_WRITE] != -1 && write(host->rrdpush_sender_pipe[PIPE_WRITE], " ", 1) == -1)
         error("STREAM %s [send]: cannot write to internal pipe", host->hostname);
 
-    host->labels_flag &= ~LABEL_FLAG_UPDATE_STREAM;
+    host->labels.labels_flag &= ~LABEL_FLAG_UPDATE_STREAM;
 }
+
+void rrdpush_claimed_id(RRDHOST *host)
+{
+    if(unlikely(!host->rrdpush_send_enabled || !host->rrdpush_sender_connected))
+        return;
+    
+    if(host->sender->version < STREAM_VERSION_CLAIM)
+        return;
+
+    sender_start(host->sender);
+    rrdhost_aclk_state_lock(host);
+
+    buffer_sprintf(host->sender->build, "CLAIMED_ID %s %s\n", host->machine_guid, (host->aclk_state.claimed_id ? host->aclk_state.claimed_id : "NULL") );
+
+    rrdhost_aclk_state_unlock(host);
+    sender_commit(host->sender);
+
+    // signal the sender there are more data
+    if(host->rrdpush_sender_pipe[PIPE_WRITE] != -1 && write(host->rrdpush_sender_pipe[PIPE_WRITE], " ", 1) == -1)
+        error("STREAM %s [send]: cannot write to internal pipe", host->hostname);
+}
+
 // ----------------------------------------------------------------------------
 // rrdpush sender thread
 
@@ -476,7 +498,7 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
         else if(!strcmp(name, "ver"))
             stream_version = MIN((uint32_t) strtoul(value, NULL, 0), STREAMING_PROTOCOL_CURRENT_VERSION);
         else {
-            // An old Netdata slave does not have a compatible streaming protocol, map to something sane.
+            // An old Netdata child does not have a compatible streaming protocol, map to something sane.
             if (!strcmp(name, "NETDATA_SYSTEM_OS_NAME"))
                 name = "NETDATA_HOST_OS_NAME";
             else if (!strcmp(name, "NETDATA_SYSTEM_OS_ID"))
@@ -610,9 +632,16 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
      * lookup to the now-attached structure).
      */
     struct receiver_state *rpt = callocz(1, sizeof(*rpt));
+
+    rrd_rdlock();
     RRDHOST *host = rrdhost_find_by_guid(machine_guid, 0);
+    if (unlikely(host && rrdhost_flag_check(host, RRDHOST_FLAG_ARCHIVED))) /* Ignore archived hosts. */
+        host = NULL;
     if (host) {
+        rrdhost_wrlock(host);
         netdata_mutex_lock(&host->receiver_lock);
+        rrdhost_flag_clear(host, RRDHOST_FLAG_ORPHAN);
+        host->senders_disconnected_time = 0;
         if (host->receiver != NULL) {
             time_t age = now_realtime_sec() - host->receiver->last_msg_t;
             if (age > 30) {
@@ -623,6 +652,8 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
             }
             else {
                 netdata_mutex_unlock(&host->receiver_lock);
+                rrdhost_unlock(host);
+                rrd_unlock();
                 log_stream_connection(w->client_ip, w->client_port, key, host->machine_guid, host->hostname,
                                       "REJECTED - ALREADY CONNECTED");
                 info("STREAM %s [receive from [%s]:%s]: multiple connections for same host detected - existing connection is active (within last %ld sec), rejecting new connection.", host->hostname, w->client_ip, w->client_port, age);
@@ -635,7 +666,9 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
         }
         host->receiver = rpt;
         netdata_mutex_unlock(&host->receiver_lock);
+        rrdhost_unlock(host);
     }
+    rrd_unlock();
 
     rpt->last_msg_t = now_realtime_sec();
 
@@ -673,14 +706,13 @@ int rrdpush_receiver_thread_spawn(struct web_client *w, char *url) {
     }
 
 
-    netdata_thread_t thread;
 
     debug(D_SYSTEM, "starting STREAM receive thread.");
 
     char tag[FILENAME_MAX + 1];
     snprintfz(tag, FILENAME_MAX, "STREAM_RECEIVER[%s,[%s]:%s]", rpt->hostname, w->client_ip, w->client_port);
 
-    if(netdata_thread_create(&thread, tag, NETDATA_THREAD_OPTION_DEFAULT, rrdpush_receiver_thread, (void *)rpt))
+    if(netdata_thread_create(&rpt->thread, tag, NETDATA_THREAD_OPTION_DEFAULT, rrdpush_receiver_thread, (void *)rpt))
         error("Failed to create new STREAM receive thread for client.");
 
     // prevent the caller from closing the streaming socket

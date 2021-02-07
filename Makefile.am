@@ -66,13 +66,20 @@ dist_noinst_DATA = \
     packaging/go.d.checksums \
     packaging/jsonc.version \
     packaging/jsonc.checksums \
+    packaging/judy.version \
+    packaging/judy.checksums \
     packaging/libwebsockets.version \
     packaging/libwebsockets.checksums \
     packaging/mosquitto.version \
     packaging/mosquitto.checksums \
     packaging/bundle-dashboard.sh \
+    packaging/bundle-ebpf.sh \
+    packaging/bundle-judy.sh \
+    packaging/bundle-libbpf.sh \
     packaging/bundle-mosquitto.sh \
     packaging/check-kernel-config.sh \
+    packaging/libbpf.checksums \
+    packaging/libbpf.version \
     packaging/ebpf.checksums \
     packaging/ebpf.version \
     packaging/bundle-lws.sh \
@@ -109,7 +116,7 @@ SUBDIRS += \
     web \
     claim \
     parser \
-    aclk \
+    aclk/legacy \
     spawn \
     $(NULL)
 
@@ -124,6 +131,7 @@ AM_CFLAGS = \
     $(OPTIONAL_IPMIMONITORING_CFLAGS) \
     $(OPTIONAL_CUPS_CFLAGS) \
     $(OPTIONAL_XENSTAT_CFLAGS) \
+    $(OPTIONAL_BPF_CFLAGS) \
     $(NULL)
 
 sbin_PROGRAMS =
@@ -144,8 +152,6 @@ LIBNETDATA_FILES = \
     libnetdata/clocks/clocks.h \
     libnetdata/dictionary/dictionary.c \
     libnetdata/dictionary/dictionary.h \
-    libnetdata/ebpf/ebpf.c \
-    libnetdata/ebpf/ebpf.h \
     libnetdata/eval/eval.c \
     libnetdata/eval/eval.h \
     libnetdata/inlined.h \
@@ -184,6 +190,13 @@ LIBNETDATA_FILES = \
     libnetdata/health/health.h \
     libnetdata/string/utf8.h \
     $(NULL)
+
+if ENABLE_PLUGIN_EBPF
+    LIBNETDATA_FILES += \
+        libnetdata/ebpf/ebpf.c \
+        libnetdata/ebpf/ebpf.h \
+        $(NULL)
+endif
 
 APPS_PLUGIN_FILES = \
     collectors/apps.plugin/apps_plugin.c \
@@ -273,6 +286,8 @@ EBPF_PLUGIN_FILES = \
     collectors/ebpf.plugin/ebpf_socket.c \
     collectors/ebpf.plugin/ebpf_socket.h \
     collectors/ebpf.plugin/ebpf.h \
+    collectors/ebpf.plugin/ebpf_apps.c \
+    collectors/ebpf.plugin/ebpf_apps.h \
     $(LIBNETDATA_FILES) \
     $(NULL)
 
@@ -290,6 +305,7 @@ PROC_PLUGIN_FILES = \
     collectors/proc.plugin/proc_pressure.c \
     collectors/proc.plugin/proc_pressure.h \
     collectors/proc.plugin/proc_net_dev.c \
+    collectors/proc.plugin/proc_net_wireless.c \
     collectors/proc.plugin/proc_net_ip_vs_stats.c \
     collectors/proc.plugin/proc_net_netstat.c \
     collectors/proc.plugin/proc_net_rpc_nfs.c \
@@ -317,6 +333,7 @@ PROC_PLUGIN_FILES = \
     collectors/proc.plugin/sys_devices_system_node.c \
     collectors/proc.plugin/sys_fs_btrfs.c \
     collectors/proc.plugin/sys_class_power_supply.c \
+    collectors/proc.plugin/sys_class_infiniband.c \
     $(NULL)
 
 TC_PLUGIN_FILES = \
@@ -349,6 +366,7 @@ RRD_PLUGIN_FILES = \
     database/rrddimvar.h \
     database/rrdfamily.c \
     database/rrdhost.c \
+    database/rrdlabels.c \
     database/rrd.c \
     database/rrd.h \
     database/rrdset.c \
@@ -360,6 +378,10 @@ RRD_PLUGIN_FILES = \
 
 if ENABLE_DBENGINE
     RRD_PLUGIN_FILES += \
+        database/sqlite/sqlite_functions.c \
+        database/sqlite/sqlite_functions.h \
+        database/sqlite/sqlite3.c \
+        database/sqlite/sqlite3.h \
         database/engine/rrdengine.c \
         database/engine/rrdengine.h \
         database/engine/rrddiskprotocol.h \
@@ -375,6 +397,16 @@ if ENABLE_DBENGINE
         database/engine/pagecache.h \
         database/engine/rrdenglocking.c \
         database/engine/rrdenglocking.h \
+        database/engine/metadata_log/metadatalog.h \
+        database/engine/metadata_log/metadatalogapi.c \
+        database/engine/metadata_log/metadatalogapi.h \
+        database/engine/metadata_log/logfile.h \
+        database/engine/metadata_log/logfile.c \
+        database/engine/metadata_log/metadatalogprotocol.h \
+        database/engine/metadata_log/metalogpluginsd.c \
+        database/engine/metadata_log/metalogpluginsd.h \
+        database/engine/metadata_log/compaction.c \
+        database/engine/metadata_log/compaction.h \
         $(NULL)
 endif
 
@@ -492,20 +524,27 @@ PARSER_FILES = \
     $(NULL)
 
 ACLK_FILES = \
-    aclk/aclk_common.c \
-    aclk/aclk_common.h \
+    aclk/legacy/aclk_rrdhost_state.h \
+    aclk/legacy/aclk_common.c \
+    aclk/legacy/aclk_common.h \
+    aclk/legacy/aclk_stats.c \
+    aclk/legacy/aclk_stats.h \
     $(NULL)
 
 if ENABLE_ACLK
 ACLK_FILES += \
-    aclk/agent_cloud_link.c \
-    aclk/agent_cloud_link.h \
-    aclk/mqtt.c \
-    aclk/mqtt.h \
-    aclk/aclk_lws_wss_client.c \
-    aclk/aclk_lws_wss_client.h \
-    aclk/aclk_lws_https_client.c \
-    aclk/aclk_lws_https_client.h \
+    aclk/legacy/agent_cloud_link.c \
+    aclk/legacy/agent_cloud_link.h \
+    aclk/legacy/aclk_query.c \
+    aclk/legacy/aclk_query.h \
+    aclk/legacy/mqtt.c \
+    aclk/legacy/mqtt.h \
+    aclk/legacy/aclk_rx_msgs.c \
+    aclk/legacy/aclk_rx_msgs.h \
+    aclk/legacy/aclk_lws_wss_client.c \
+    aclk/legacy/aclk_lws_wss_client.h \
+    aclk/legacy/aclk_lws_https_client.c \
+    aclk/legacy/aclk_lws_https_client.h \
     $(NULL)
 endif
 
@@ -583,6 +622,8 @@ MONGODB_BACKEND_FILES = \
     $(NULL)
 
 DAEMON_FILES = \
+    daemon/buildinfo.c \
+    daemon/buildinfo.h \
     daemon/common.c \
     daemon/common.h \
     daemon/daemon.c \
@@ -645,6 +686,7 @@ endif
 
 NETDATA_COMMON_LIBS = \
     $(OPTIONAL_MATH_LIBS) \
+    $(OPTIONAL_BPF_LIBS) \
     $(OPTIONAL_ZLIB_LIBS) \
     $(OPTIONAL_SSL_LIBS) \
     $(OPTIONAL_UUID_LIBS) \
@@ -654,7 +696,6 @@ NETDATA_COMMON_LIBS = \
     $(OPTIONAL_JUDY_LIBS) \
     $(OPTIONAL_SSL_LIBS) \
     $(OPTIONAL_JSONC_LIBS) \
-    $(OPTIONAL_EBPF_LIBS) \
     $(NULL)
 
 if LINK_STATIC_JSONC
@@ -674,8 +715,8 @@ netdata_SOURCES = $(NETDATA_FILES)
 if ENABLE_ACLK
 netdata_LDADD = \
     externaldeps/mosquitto/libmosquitto.a \
-    externaldeps/libwebsockets/libwebsockets.a \
     $(OPTIONAL_LIBCAP_LIBS) \
+    $(OPTIONAL_LWS_LIBS) \
     $(NETDATA_COMMON_LIBS) \
     $(NULL)
 else
@@ -815,6 +856,7 @@ if ENABLE_UNITTESTS
         exporting/tests/exporting_engine_testdriver \
         web/api/tests/web_api_testdriver \
         web/api/tests/valid_urls_testdriver \
+        collectors/cgroups_plugin/tests/cgroups_testdriver \
         $(NULL)
 
     TESTS = $(check_PROGRAMS)
@@ -917,6 +959,7 @@ if ENABLE_UNITTESTS
         -Wl,--wrap=connect_to_one_of \
         -Wl,--wrap=create_main_rusage_chart \
         -Wl,--wrap=send_main_rusage \
+        -Wl,--wrap=simple_connector_end_batch \
         $(TEST_LDFLAGS) \
         $(NULL)
     exporting_tests_exporting_engine_testdriver_LDADD = $(NETDATA_COMMON_LIBS) $(TEST_LIBS)
@@ -966,4 +1009,19 @@ if ENABLE_BACKEND_MONGODB
         -Wl,--wrap=mongoc_collection_insert_many \
         $(NULL)
 endif
+
+    collectors_cgroups_plugin_tests_cgroups_testdriver_SOURCES = \
+        collectors/cgroups.plugin/tests/test_cgroups_plugin.c \
+        collectors/cgroups.plugin/tests/test_cgroups_plugin.h \
+        collectors/cgroups.plugin/tests/test_doubles.c \
+        $(CGROUPS_PLUGIN_FILES) \
+        database/rrdlabels.c \
+        database/rrd.h \
+        $(LIBNETDATA_FILES) \
+        $(NULL)
+    collectors_cgroups_plugin_tests_cgroups_testdriver_LDADD = $(NETDATA_COMMON_LIBS) $(TEST_LIBS)
+    collectors_cgroups_plugin_tests_cgroups_testdriver_LDFLAGS = \
+        -Wl,--wrap=add_label_to_list \
+        $(NULL)
+
 endif

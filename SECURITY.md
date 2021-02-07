@@ -1,8 +1,7 @@
 <!--
----
 title: "Security Policy"
+description: "The Netdata team maintains and adheres to a formal process any time a member of the community reports a security vulnerability."
 custom_edit_url: https://github.com/netdata/netdata/edit/master/SECURITY.md
----
 -->
 
 # Security Policy
@@ -17,7 +16,7 @@ custom_edit_url: https://github.com/netdata/netdata/edit/master/SECURITY.md
 
 We're extremely grateful for security researchers and users that report vulnerabilities to Netdata Open Source Community. All reports are thoroughly investigated by a set of community volunteers.
 
-To make a report, please create a post [here](https://groups.google.com/a/netdata.cloud/forum/#!newtopic/security) with
+To make a report, please send an email to **security@netdata.cloud** with
 the vulnerability details and the details expected for [all Netdata bug
 reports](https://github.com/netdata/netdata/blob/c1f4c6cf503995cd4d896c5821b00d55afcbde87/.github/ISSUE_TEMPLATE/bug_report.md).
 

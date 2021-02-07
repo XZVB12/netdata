@@ -28,6 +28,7 @@
 const char *global_backend_prefix = "netdata";
 int global_backend_update_every = 10;
 BACKEND_OPTIONS global_backend_options = BACKEND_SOURCE_DATA_AVERAGE | BACKEND_OPTION_SEND_NAMES;
+const char *global_backend_source = NULL;
 
 // ----------------------------------------------------------------------------
 // helper functions for backends
@@ -528,6 +529,7 @@ void *backends_main(void *ptr) {
     // and prepare for sending data to our backend
 
     global_backend_options = backend_parse_data_source(source, global_backend_options);
+    global_backend_source = source;
 
     if(timeoutms < 1) {
         error("BACKEND: invalid timeout %ld ms given. Assuming %d ms.", timeoutms, global_backend_update_every * 2 * 1000);
@@ -551,7 +553,7 @@ void *backends_main(void *ptr) {
         case BACKEND_TYPE_OPENTSDB_USING_HTTP: {
 #ifdef ENABLE_HTTPS
             if (!strcmp(type, "opentsdb:https")) {
-                security_start_ssl(NETDATA_SSL_CONTEXT_OPENTSDB);
+                security_start_ssl(NETDATA_SSL_CONTEXT_EXPORTING);
             }
 #endif
             backend_set_opentsdb_http_variables(&default_port,&backend_response_checker,&backend_request_formatter);
@@ -1001,9 +1003,9 @@ void *backends_main(void *ptr) {
                 sock = connect_to_one_of(destination, default_port, &timeout, &reconnects, NULL, 0);
 #ifdef ENABLE_HTTPS
                 if(sock != -1) {
-                    if(netdata_opentsdb_ctx) {
+                    if(netdata_exporting_ctx) {
                         if(!opentsdb_ssl.conn) {
-                            opentsdb_ssl.conn = SSL_new(netdata_opentsdb_ctx);
+                            opentsdb_ssl.conn = SSL_new(netdata_exporting_ctx);
                             if(!opentsdb_ssl.conn) {
                                 error("Failed to allocate SSL structure %d.", sock);
                                 opentsdb_ssl.flags = NETDATA_SSL_NO_HANDSHAKE;
@@ -1073,7 +1075,7 @@ void *backends_main(void *ptr) {
                                     "Content-Length: %zu\r\n"
                                     "Content-Type: application/x-www-form-urlencoded\r\n\r\n",
                                     remote_write_path,
-                                    hostname,
+                                    destination,
                                     data_size
                     );
 
@@ -1229,7 +1231,7 @@ cleanup:
     buffer_free(response);
 
 #ifdef ENABLE_HTTPS
-    if(netdata_opentsdb_ctx) {
+    if(netdata_exporting_ctx) {
         if(opentsdb_ssl.conn) {
             SSL_free(opentsdb_ssl.conn);
         }

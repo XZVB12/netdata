@@ -4,14 +4,40 @@
 
 extern struct config stream_config;
 
+void destroy_receiver_state(struct receiver_state *rpt) {
+    freez(rpt->key);
+    freez(rpt->hostname);
+    freez(rpt->registry_hostname);
+    freez(rpt->machine_guid);
+    freez(rpt->os);
+    freez(rpt->timezone);
+    freez(rpt->tags);
+    freez(rpt->client_ip);
+    freez(rpt->client_port);
+    freez(rpt->program_name);
+    freez(rpt->program_version);
+#ifdef ENABLE_HTTPS
+    if(rpt->ssl.conn){
+        SSL_free(rpt->ssl.conn);
+    }
+#endif
+    freez(rpt);
+}
+
 static void rrdpush_receiver_thread_cleanup(void *ptr) {
     static __thread int executed = 0;
     if(!executed) {
         executed = 1;
         struct receiver_state *rpt = (struct receiver_state *) ptr;
+        // If the shutdown sequence has started, and this receiver is still attached to the host then we cannot touch
+        // the host pointer as it is unpredicable when the RRDHOST is deleted. Do the cleanup from rrdhost_free().
+        if (netdata_exit && rpt->host) {
+            rpt->exited = 1;
+            return;
+        }
 
         // Make sure that we detach this thread and don't kill a freshly arriving receiver
-        if (rpt->host) {
+        if (!netdata_exit && rpt->host) {
             netdata_mutex_lock(&rpt->host->receiver_lock);
             if (rpt->host->receiver == rpt)
                 rpt->host->receiver = NULL;
@@ -19,25 +45,7 @@ static void rrdpush_receiver_thread_cleanup(void *ptr) {
         }
 
         info("STREAM %s [receive from [%s]:%s]: receive thread ended (task id %d)", rpt->hostname, rpt->client_ip, rpt->client_port, gettid());
-
-        freez(rpt->key);
-        freez(rpt->hostname);
-        freez(rpt->registry_hostname);
-        freez(rpt->machine_guid);
-        freez(rpt->os);
-        freez(rpt->timezone);
-        freez(rpt->tags);
-        freez(rpt->client_ip);
-        freez(rpt->client_port);
-        freez(rpt->program_name);
-        freez(rpt->program_version);
-#ifdef ENABLE_HTTPS
-        if(rpt->ssl.conn){
-            SSL_free(rpt->ssl.conn);
-        }
-#endif
-        freez(rpt);
-
+        destroy_receiver_state(rpt);
     }
 }
 
@@ -51,7 +59,7 @@ PARSER_RC streaming_timestamp(char **words, void *user, PLUGINSD_ACTION *plugins
     RRDHOST *host = ((PARSER_USER_OBJECT *)user)->host;
     struct plugind *cd = ((PARSER_USER_OBJECT *)user)->cd;
     if (cd->version < VERSION_GAP_FILLING ) {
-        error("STREAM %s from %s: Slave negotiated version %u but sent TIMESTAMP!", host->hostname, cd->cmd,
+        error("STREAM %s from %s: Child negotiated version %u but sent TIMESTAMP!", host->hostname, cd->cmd,
                cd->version);
         return PARSER_RC_OK;    // Ignore error and continue stream
     }
@@ -85,6 +93,48 @@ PARSER_RC streaming_timestamp(char **words, void *user, PLUGINSD_ACTION *plugins
         return PARSER_RC_OK;
     }
     return PARSER_RC_ERROR;
+}
+
+#define CLAIMED_ID_MIN_WORDS 3
+PARSER_RC streaming_claimed_id(char **words, void *user, PLUGINSD_ACTION *plugins_action)
+{
+    UNUSED(plugins_action);
+
+    int i;
+    uuid_t uuid;
+    RRDHOST *host = ((PARSER_USER_OBJECT *)user)->host;
+
+    for (i = 0; words[i]; i++) ;
+    if (i != CLAIMED_ID_MIN_WORDS) {
+        error("Command CLAIMED_ID came malformed %d parameters are expected but %d received", CLAIMED_ID_MIN_WORDS - 1, i - 1);
+        return PARSER_RC_ERROR;
+    }
+
+    // We don't need the parsed UUID
+    // just do it to check the format
+    if(uuid_parse(words[1], uuid)) {
+        error("1st parameter (host GUID) to CLAIMED_ID command is not valid GUID. Received: \"%s\".", words[1]);
+        return PARSER_RC_ERROR;
+    }
+    if(uuid_parse(words[2], uuid) && strcmp(words[2], "NULL")) {
+        error("2nd parameter (Claim ID) to CLAIMED_ID command is not valid GUID. Received: \"%s\".", words[2]);
+        return PARSER_RC_ERROR;
+    }
+
+    if(strcmp(words[1], host->machine_guid)) {
+        error("Claim ID is for host \"%s\" but it came over connection for \"%s\"", words[1], host->machine_guid);
+        return PARSER_RC_OK; //the message is OK problem must be somewehere else
+    }
+
+    rrdhost_aclk_state_lock(host);
+    if (host->aclk_state.claimed_id)
+        freez(host->aclk_state.claimed_id);
+    host->aclk_state.claimed_id = strcmp(words[2], "NULL") ? strdupz(words[2]) : NULL;
+    rrdhost_aclk_state_unlock(host);
+
+    rrdpush_claimed_id(host);
+
+    return PARSER_RC_OK;
 }
 
 /* The receiver socket is blocking, perform a single read into a buffer so that we can reassemble lines for parsing.
@@ -131,7 +181,7 @@ static char *receiver_next_line(struct receiver_state *r, int *pos) {
         r->read_buffer[scan] = 0;
         return &r->read_buffer[start];
     }
-    memcpy(r->read_buffer, &r->read_buffer[start], r->read_len - start);
+    memmove(r->read_buffer, &r->read_buffer[start], r->read_len - start);
     r->read_len -= start;
     return NULL;
 }
@@ -148,6 +198,7 @@ size_t streaming_parser(struct receiver_state *rpt, struct plugind *cd, FILE *fp
 
     PARSER *parser = parser_init(rpt->host, user, fp, PARSER_INPUT_SPLIT);
     parser_add_keyword(parser, "TIMESTAMP", streaming_timestamp);
+    parser_add_keyword(parser, "CLAIMED_ID", streaming_claimed_id);
 
     if (unlikely(!parser)) {
         error("Failed to initialize parser");
@@ -228,12 +279,11 @@ static int rrdpush_receive(struct receiver_state *rpt)
     rrdpush_send_charts_matching = appconfig_get(&stream_config, rpt->key, "default proxy send charts matching", rrdpush_send_charts_matching);
     rrdpush_send_charts_matching = appconfig_get(&stream_config, rpt->machine_guid, "proxy send charts matching", rrdpush_send_charts_matching);
 
-    rpt->tags = (char*)appconfig_set_default(&stream_config, rpt->machine_guid, "host tags", (rpt->tags)?rpt->tags:"");
-    if(rpt->tags && !*rpt->tags) rpt->tags = NULL;
+    (void)appconfig_set_default(&stream_config, rpt->machine_guid, "host tags", (rpt->tags)?rpt->tags:"");
 
     if (strcmp(rpt->machine_guid, localhost->machine_guid) == 0) {
-        log_stream_connection(rpt->client_ip, rpt->client_port, rpt->key, rpt->machine_guid, rpt->hostname, "DENIED - ATTEMPT TO RECEIVE METRICS FROM MACHINE_GUID IDENTICAL TO MASTER");
-        error("STREAM %s [receive from %s:%s]: denied to receive metrics, machine GUID [%s] is my own. Did you copy the master/proxy machine guid to a slave?", rpt->hostname, rpt->client_ip, rpt->client_port, rpt->machine_guid);
+        log_stream_connection(rpt->client_ip, rpt->client_port, rpt->key, rpt->machine_guid, rpt->hostname, "DENIED - ATTEMPT TO RECEIVE METRICS FROM MACHINE_GUID IDENTICAL TO PARENT");
+        error("STREAM %s [receive from %s:%s]: denied to receive metrics, machine GUID [%s] is my own. Did you copy the parent/proxy machine GUID to a child?", rpt->hostname, rpt->client_ip, rpt->client_port, rpt->machine_guid);
         close(rpt->fd);
         return 1;
     }
@@ -247,8 +297,8 @@ static int rrdpush_receive(struct receiver_state *rpt)
                 , rpt->os
                 , rpt->timezone
                 , rpt->tags
-                , program_name
-                , program_version
+                , rpt->program_name
+                , rpt->program_version
                 , rpt->update_every
                 , history
                 , mode
@@ -370,10 +420,8 @@ static int rrdpush_receive(struct receiver_state *rpt)
     }
 */
 
-    rrdhost_flag_clear(rpt->host, RRDHOST_FLAG_ORPHAN);
 //    rpt->host->connected_senders++;
-    rpt->host->senders_disconnected_time = 0;
-    rpt->host->labels_flag = (rpt->stream_version > 0)?LABEL_FLAG_UPDATE_STREAM:LABEL_FLAG_STOP_STREAM;
+    rpt->host->labels.labels_flag = (rpt->stream_version > 0)?LABEL_FLAG_UPDATE_STREAM:LABEL_FLAG_STOP_STREAM;
 
     if(health_enabled != CONFIG_BOOLEAN_NO) {
         if(alarms_delay > 0) {
@@ -392,28 +440,48 @@ static int rrdpush_receive(struct receiver_state *rpt)
 
     cd.version = rpt->stream_version;
 
+#ifdef ENABLE_ACLK
+    // in case we have cloud connection we inform cloud
+    // new slave connected
+    if (netdata_cloud_setting)
+        aclk_host_state_update(rpt->host, ACLK_CMD_CHILD_CONNECT);
+#endif
 
     size_t count = streaming_parser(rpt, &cd, fp);
-    //size_t count = pluginsd_process(host, &cd, fp, 1);
 
-    log_stream_connection(rpt->client_ip, rpt->client_port, rpt->key, rpt->host->machine_guid, rpt->host->hostname, "DISCONNECTED");
-    error("STREAM %s [receive from [%s]:%s]: disconnected (completed %zu updates).", rpt->host->hostname, rpt->client_ip, rpt->client_port, count);
+    log_stream_connection(rpt->client_ip, rpt->client_port, rpt->key, rpt->host->machine_guid, rpt->hostname,
+                          "DISCONNECTED");
+    error("STREAM %s [receive from [%s]:%s]: disconnected (completed %zu updates).", rpt->hostname, rpt->client_ip,
+          rpt->client_port, count);
 
-    netdata_mutex_lock(&rpt->host->receiver_lock);
-    if (rpt->host->receiver == rpt) {
+#ifdef ENABLE_ACLK
+    // in case we have cloud connection we inform cloud
+    // new slave connected
+    if (netdata_cloud_setting)
+        aclk_host_state_update(rpt->host, ACLK_CMD_CHILD_DISCONNECT);
+#endif
+
+    // During a shutdown there is cleanup code in rrdhost that will cancel the sender thread
+    if (!netdata_exit && rpt->host) {
+        rrd_rdlock();
         rrdhost_wrlock(rpt->host);
-        rpt->host->senders_disconnected_time = now_realtime_sec();
-        rrdhost_flag_set(rpt->host, RRDHOST_FLAG_ORPHAN);
-        if(health_enabled == CONFIG_BOOLEAN_AUTO)
-            rpt->host->health_enabled = 0;
+        netdata_mutex_lock(&rpt->host->receiver_lock);
+        if (rpt->host->receiver == rpt) {
+            rpt->host->senders_disconnected_time = now_realtime_sec();
+            rrdhost_flag_set(rpt->host, RRDHOST_FLAG_ORPHAN);
+            if(health_enabled == CONFIG_BOOLEAN_AUTO)
+                rpt->host->health_enabled = 0;
+        }
         rrdhost_unlock(rpt->host);
-        rrdpush_sender_thread_stop(rpt->host);
+        if (rpt->host->receiver == rpt) {
+            rrdpush_sender_thread_stop(rpt->host);
+        }
+        netdata_mutex_unlock(&rpt->host->receiver_lock);
+        rrd_unlock();
     }
-    netdata_mutex_unlock(&rpt->host->receiver_lock);
 
     // cleanup
     fclose(fp);
-
     return (int)count;
 }
 

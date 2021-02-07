@@ -70,8 +70,10 @@ static int rrdpush_sender_thread_custom_host_variables_callback(void *rrdvar_ptr
 }
 
 static void rrdpush_sender_thread_send_custom_host_variables(RRDHOST *host) {
+    sender_start(host->sender);
     int ret = rrdvar_callback_for_all_host_variables(host, rrdpush_sender_thread_custom_host_variables_callback, host);
     (void)ret;
+    sender_commit(host->sender);
 
     debug(D_STREAM, "RRDVAR sent %d VARIABLES", ret);
 }
@@ -114,8 +116,8 @@ static inline void rrdpush_sender_thread_data_flush(RRDHOST *host) {
 }
 
 static inline void rrdpush_set_flags_to_newest_stream(RRDHOST *host) {
-    host->labels_flag |= LABEL_FLAG_UPDATE_STREAM;
-    host->labels_flag &= ~LABEL_FLAG_STOP_STREAM;
+    host->labels.labels_flag |= LABEL_FLAG_UPDATE_STREAM;
+    host->labels.labels_flag &= ~LABEL_FLAG_STOP_STREAM;
 }
 
 void rrdpush_encode_variable(stream_encoded_t *se, RRDHOST *host)
@@ -145,7 +147,7 @@ void rrdpush_clean_encoded(stream_encoded_t *se)
         freez(se->kernel_version);
 }
 
-static int rrdpush_sender_thread_connect_to_master(RRDHOST *host, int default_port, int timeout,
+static int rrdpush_sender_thread_connect_to_parent(RRDHOST *host, int default_port, int timeout,
     struct sender_state *s) {
 
     struct timeval tv = {
@@ -219,6 +221,7 @@ static int rrdpush_sender_thread_connect_to_master(RRDHOST *host, int default_po
                  "&NETDATA_SYSTEM_OS_VERSION=%s"
                  "&NETDATA_SYSTEM_OS_VERSION_ID=%s"
                  "&NETDATA_SYSTEM_OS_DETECTION=%s"
+                 "&NETDATA_HOST_IS_K8S_NODE=%s"
                  "&NETDATA_SYSTEM_KERNEL_NAME=%s"
                  "&NETDATA_SYSTEM_KERNEL_VERSION=%s"
                  "&NETDATA_SYSTEM_ARCHITECTURE=%s"
@@ -255,6 +258,7 @@ static int rrdpush_sender_thread_connect_to_master(RRDHOST *host, int default_po
                  , se.os_version
                  , (host->system_info->host_os_version_id) ? host->system_info->host_os_version_id : ""
                  , (host->system_info->host_os_detection) ? host->system_info->host_os_detection : ""
+                 , (host->system_info->is_k8s_node) ? host->system_info->is_k8s_node : ""
                  , se.kernel_name
                  , se.kernel_version
                  , (host->system_info->architecture) ? host->system_info->architecture : ""
@@ -352,8 +356,8 @@ static int rrdpush_sender_thread_connect_to_master(RRDHOST *host, int default_po
             answer = memcmp(http, START_STREAMING_PROMPT, strlen(START_STREAMING_PROMPT));
             if(!answer) {
                 version = 0;
-                host->labels_flag |= LABEL_FLAG_STOP_STREAM;
-                host->labels_flag &= ~LABEL_FLAG_UPDATE_STREAM;
+                host->labels.labels_flag |= LABEL_FLAG_STOP_STREAM;
+                host->labels.labels_flag &= ~LABEL_FLAG_UPDATE_STREAM;
             }
         }
     }
@@ -365,7 +369,7 @@ static int rrdpush_sender_thread_connect_to_master(RRDHOST *host, int default_po
     }
     s->version = version;
 
-    info("STREAM %s [send to %s]: established communication with a master using protocol version %d - ready to send metrics..."
+    info("STREAM %s [send to %s]: established communication with a parent using protocol version %d - ready to send metrics..."
          , host->hostname
          , s->connected_to
          , version);
@@ -385,7 +389,7 @@ static void attempt_to_connect(struct sender_state *state)
 {
     state->send_attempts = 0;
 
-    if(rrdpush_sender_thread_connect_to_master(state->host, state->default_port, state->timeout, state)) {
+    if(rrdpush_sender_thread_connect_to_parent(state->host, state->default_port, state->timeout, state)) {
         state->last_sent_t = now_monotonic_sec();
 
         // reset the buffer, to properly send charts and metrics
@@ -416,15 +420,17 @@ static void attempt_to_connect(struct sender_state *state)
 }
 
 // TCP window is open and we have data to transmit.
-void attempt_to_send(struct sender_state *s, char *chunk, size_t outstanding) {
+void attempt_to_send(struct sender_state *s) {
+
     rrdpush_send_labels(s->host);
 
-    struct circular_buffer *cb = s->host->sender->buffer;
-    debug(D_STREAM, "STREAM: Sending data. Buffer r=%zu w=%zu s=%zu, next chunk=%zu", cb->read, cb->write, cb->size, outstanding);
+    struct circular_buffer *cb = s->buffer;
 
     netdata_thread_disable_cancelability();
-    netdata_mutex_lock(&s->host->sender->mutex);
-
+    netdata_mutex_lock(&s->mutex);
+    char *chunk;
+    size_t outstanding = cbuffer_next_unsafe(s->buffer, &chunk);
+    debug(D_STREAM, "STREAM: Sending data. Buffer r=%zu w=%zu s=%zu, next chunk=%zu", cb->read, cb->write, cb->size, outstanding);
     ssize_t ret;
 #ifdef ENABLE_HTTPS
     SSL *conn = s->host->ssl.conn ;
@@ -437,7 +443,7 @@ void attempt_to_send(struct sender_state *s, char *chunk, size_t outstanding) {
     ret = send(s->host->rrdpush_sender_socket, chunk, outstanding, MSG_DONTWAIT);
 #endif
     if (likely(ret > 0)) {
-        cbuffer_remove_unsafe(s->host->sender->buffer, ret);
+        cbuffer_remove_unsafe(s->buffer, ret);
         s->sent_bytes_on_this_connection += ret;
         s->sent_bytes += ret;
         debug(D_STREAM, "STREAM %s [send to %s]: Sent %zd bytes", s->host->hostname, s->connected_to, ret);
@@ -455,7 +461,7 @@ void attempt_to_send(struct sender_state *s, char *chunk, size_t outstanding) {
         debug(D_STREAM, "STREAM: send() returned 0 -> no error but no transmission");
     }
 
-    netdata_mutex_unlock(&s->host->sender->mutex);
+    netdata_mutex_unlock(&s->mutex);
     netdata_thread_enable_cancelability();
 }
 
@@ -511,7 +517,7 @@ void execute_commands(struct sender_state *s) {
         start = newline+1;
     }
     if (start<end) {
-        memcpy( s->read_buffer, start, end-start);
+        memmove(s->read_buffer, start, end-start);
         s->read_len = end-start;
     }
 }
@@ -580,10 +586,14 @@ void *rrdpush_sender_thread(void *ptr) {
 
     s->timeout = (int)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "timeout seconds", 60);
     s->default_port = (int)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "default port", 19999);
-    s->max_size = (size_t)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "buffer size bytes",
-                                                  1024 * 1024);
-    s->reconnect_delay = (unsigned int)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "reconnect delay seconds", 5);
-    remote_clock_resync_iterations = (unsigned int)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "initial clock resync iterations", remote_clock_resync_iterations); // TODO: REMOVE FOR SLEW / GAPFILLING
+    s->buffer->max_size =
+        (size_t)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "buffer size bytes", 1024 * 1024);
+    s->reconnect_delay =
+        (unsigned int)appconfig_get_number(&stream_config, CONFIG_SECTION_STREAM, "reconnect delay seconds", 5);
+    remote_clock_resync_iterations = (unsigned int)appconfig_get_number(
+        &stream_config, CONFIG_SECTION_STREAM,
+        "initial clock resync iterations",
+        remote_clock_resync_iterations); // TODO: REMOVE FOR SLEW / GAPFILLING
 
     // initialize rrdpush globals
     s->host->rrdpush_sender_connected = 0;
@@ -618,6 +628,7 @@ void *rrdpush_sender_thread(void *ptr) {
                 buffer_sprintf(s->build, "TIMESTAMP %ld", now);
                 sender_commit(s);
             }
+            rrdpush_claimed_id(s->host);
             continue;
         }
 
@@ -633,8 +644,11 @@ void *rrdpush_sender_thread(void *ptr) {
         fds[Socket].revents = 0;
         fds[Socket].fd = s->host->rrdpush_sender_socket;
 
+        netdata_mutex_lock(&s->mutex);
         char *chunk;
         size_t outstanding = cbuffer_next_unsafe(s->host->sender->buffer, &chunk);
+        chunk = NULL;   // Do not cache pointer outside of region - could be invalidated
+        netdata_mutex_unlock(&s->mutex);
         if(outstanding) {
             s->send_attempts++;
             fds[Socket].events = POLLIN | POLLOUT;
@@ -677,7 +691,7 @@ void *rrdpush_sender_thread(void *ptr) {
 
         // If we have data and have seen the TCP window open then try to close it by a transmission.
         if (outstanding && fds[Socket].revents & POLLOUT)
-            attempt_to_send(s, chunk, outstanding);
+            attempt_to_send(s);
 
         // TODO-GAPS - why do we only check this on the socket, not the pipe?
         if (outstanding) {

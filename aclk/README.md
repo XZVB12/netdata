@@ -14,19 +14,38 @@ through Netdata Cloud. The ACLK establishes an outgoing secure WebSocket (WSS) c
 The Cloud App lives at app.netdata.cloud which currently resolves to 35.196.244.138. However, this IP or range of 
 IPs can change without notice. Watch this page for updates.
 
-Netdata is a distributed monitoring system. Very few data are streamed to the cloud, such as data about:
- - All configured alarms and their current status
- - Metrics that are requested by the cloud user
- - A list of the active collectors
-
 For a guide to claiming a node using the ACLK, plus additional troubleshooting and reference information, read our [get
 started with Cloud](https://learn.netdata.cloud/docs/cloud/get-started) guide or the full [claiming
 documentation](/claim/README.md).
 
+## Data privacy
+
+Privacy is very important to us. We firmly believe that your data belongs to you. This is why **we don't store any metric data in Netdata Cloud**. 
+
+All the data that the user sees in the web browser when using Netdata Cloud, are actually streamed directly from the Netdata Agent to the Netdata Cloud dashboard. They pass through our systems, but they are not stored.
+
+We do however store a limited number of *metadata* to be able to offer the stunning visualizations and advanced functionality of Netdata Cloud.
+
+### Metadata
+
+The information we store in Netdata Cloud is the following (using the publicly available demo server `frankfurt.my-netdata.io` as an example):
+- The email address you used to sign up/or sign in
+- For each node claimed to your Spaces in Netdata Cloud:
+ - Hostname (as it appears in Netdata Cloud)
+ - Information shown in `/api/v1/info`. For example: [https://frankfurt.my-netdata.io/api/v1/info](https://frankfurt.my-netdata.io/api/v1/info).
+ - The chart metadata shown in `/api/v1/charts`. For example: [https://frankfurt.my-netdata.io/api/v1/info](https://frankfurt.my-netdata.io/api/v1/info).
+ - Alarm configurations shown in `/api/v1/alarms?all`. For example: [https://frankfurt.my-netdata.io/api/v1/alarms?all](https://frankfurt.my-netdata.io/api/v1/alarms?all).
+ - Active alarms shown in `/api/v1/alarms`. For example: [https://frankfurt.my-netdata.io/api/v1/alarms](https://frankfurt.my-netdata.io/api/v1/alarms).
+
+How we use them:
+- The data are stored in our production database on Google Cloud and some of it is also used in BigQuery, our data lake, for analytics purposes. These analytics are crucial for our product development process.
+- Email is used to identify users in regards to product use and to enrich our tools with product use, such as our CRM.
+- This data is only be available to Netdata and never to a 3rd party.
+
 ## Enable and configure the ACLK
 
 The ACLK is enabled by default, with its settings automatically configured and stored in the Agent's memory. No file is
-created at `var/lib/netdata/cloud.d/cloud.conf` until you either claim a node or create it yourself. The default
+created at `/var/lib/netdata/cloud.d/cloud.conf` until you either claim a node or create it yourself. The default
 configuration uses two settings:
 
 ```conf
@@ -37,6 +56,16 @@ configuration uses two settings:
 
 If your Agent needs to use a proxy to access the internet, you must [set up a proxy for
 claiming](/claim/README.md#claim-through-a-proxy).
+
+You can configure following keys in the `netdata.conf` section `[cloud]`:
+```
+[cloud]
+    statistics = yes
+    query thread count = 2
+```
+
+- `statistics` enables/disables ACLK related statistics and their charts. You can disable this to save some space in the database and slightly reduce memory usage of Netdata Agent.
+- `query thread count` specifies the number of threads to process cloud queries. Increasing this setting is useful for nodes with many children (streaming), which can expect to handle more queries (and/or more complicated queries).
 
 ## Disable the ACLK
 
@@ -101,11 +130,12 @@ Restart your Agent to disable the ACLK.
 ### Re-enable the ACLK
 
 If you first disable the ACLK and any Cloud functionality and then decide you would like to use Cloud, you must either
-reinstall Netdata with Cloud enabled or change the runtime setting in your `cloud.conf` file.
+[reinstall Netdata](/packaging/installer/REINSTALL.md) with Cloud enabled or change the runtime setting in your
+`cloud.conf` file.
 
-If you passed `--disable-cloud` to `netdata-installer.sh` during installation, you must reinstall your Agent. Use the
-same method as before, but pass `--require-cloud` to the installer. When installation finishes you can [claim your
-node](/claim/README.md#how-to-claim-a-node).
+If you passed `--disable-cloud` to `netdata-installer.sh` during installation, you must
+[reinstall](/packaging/installer/REINSTALL.md) your Agent. Use the same method as before, but pass `--require-cloud` to
+the installer. When installation finishes you can [claim your node](/claim/README.md#how-to-claim-a-node).
 
 If you changed the runtime setting in your `var/lib/netdata/cloud.d/cloud.conf` file, edit the file again and change
 `enabled` to `yes`:
@@ -118,3 +148,4 @@ If you changed the runtime setting in your `var/lib/netdata/cloud.d/cloud.conf` 
 Restart your Agent and [claim your node](/claim/README.md#how-to-claim-a-node).
 
 [![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Faclk%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
+

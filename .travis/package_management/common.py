@@ -51,7 +51,7 @@ def replace_tag(tag_name, spec, new_tag_content):
 
 def run_command(container, command):
     print("Running command: %s" % command)
-    command_result = container.attach_wait(lxc.attach_run_command, command)
+    command_result = container.attach_wait(lxc.attach_run_command, command, stdout=sys.stdout.buffer, stderr=sys.stdout.buffer)
 
     if command_result != 0:
         raise Exception("Command failed with exit code %d" % command_result)
@@ -111,6 +111,7 @@ def install_common_dependendencies(container):
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-devel"])
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-c-devel"])
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-compiler"])
+        run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "libwebsockets-devel"])
 
     elif str(os.environ["REPO_TOOL"]).count("apt-get") == 1:
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "g++"])
@@ -132,6 +133,7 @@ def install_common_dependendencies(container):
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-devel"])
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-c-devel"])
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "protobuf-compiler"])
+        run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "libwebsockets-devel"])
 
     if os.environ["BUILD_STRING"].count("el/6") <= 0:
         run_command(container, [os.environ["REPO_TOOL"], "install", "-y", "autogen"])

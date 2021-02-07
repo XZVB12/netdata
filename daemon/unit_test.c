@@ -1673,7 +1673,7 @@ static int test_dbengine_check_rrdr(RRDSET *st[CHARTS], RRDDIM *rd[CHARTS][DIMS]
     update_every = REGION_UPDATE_EVERY[current_region];
     long points = (time_end - time_start) / update_every - 1;
     for (i = 0 ; i < CHARTS ; ++i) {
-        RRDR *r = rrd2rrdr(st[i], points, time_start + update_every, time_end, RRDR_GROUPING_AVERAGE, 0, 0, NULL);
+        RRDR *r = rrd2rrdr(st[i], points, time_start + update_every, time_end, RRDR_GROUPING_AVERAGE, 0, 0, NULL, NULL);
         if (!r) {
             fprintf(stderr, "    DB-engine unittest %s: empty RRDR ### E R R O R ###\n", st[i]->name);
             return ++errors;
@@ -1792,7 +1792,7 @@ int test_dbengine(void)
     long points = (time_end[REGIONS - 1] - time_start[0]) / update_every - 1; // cover all time regions with RRDR
     long point_offset = (time_start[current_region] - time_start[0]) / update_every;
     for (i = 0 ; i < CHARTS ; ++i) {
-        RRDR *r = rrd2rrdr(st[i], points, time_start[0] + update_every, time_end[REGIONS - 1], RRDR_GROUPING_AVERAGE, 0, 0, NULL);
+        RRDR *r = rrd2rrdr(st[i], points, time_start[0] + update_every, time_end[REGIONS - 1], RRDR_GROUPING_AVERAGE, 0, 0, NULL, NULL);
         if (!r) {
             fprintf(stderr, "    DB-engine unittest %s: empty RRDR ### E R R O R ###\n", st[i]->name);
             ++errors;
@@ -1833,9 +1833,10 @@ int test_dbengine(void)
         }
     }
 error_out:
-    rrdeng_exit(host->rrdeng_ctx);
     rrd_wrlock();
+    rrdeng_prepare_exit(host->rrdeng_ctx);
     rrdhost_delete_charts(host);
+    rrdeng_exit(host->rrdeng_ctx);
     rrd_unlock();
 
     return errors;
@@ -2098,7 +2099,7 @@ void dbengine_stress_test(unsigned TEST_DURATION_SEC, unsigned DSET_CHARTS, unsi
     struct dbengine_chart_thread **chart_threads;
     struct dbengine_query_thread **query_threads;
     unsigned i, j;
-    time_t time_start, time_end;
+    time_t time_start, test_duration;
 
     error_log_limit_unlimited();
 
@@ -2194,8 +2195,10 @@ void dbengine_stress_test(unsigned TEST_DURATION_SEC, unsigned DSET_CHARTS, unsi
     for (i = 0 ; i < QUERY_THREADS ; ++i) {
         assert(0 == uv_thread_join(&query_threads[i]->thread));
     }
-    time_end = now_realtime_sec();
-    fprintf(stderr, "\nDB-engine stress test finished in %ld seconds.\n", time_end - time_start);
+    test_duration = now_realtime_sec() - (time_start - HISTORY_SECONDS);
+    if (!test_duration)
+        test_duration = 1;
+    fprintf(stderr, "\nDB-engine stress test finished in %ld seconds.\n", test_duration);
     unsigned long stored_metrics_nr = 0;
     for (i = 0 ; i < DSET_CHARTS ; ++i) {
         stored_metrics_nr += chart_threads[i]->stored_metrics_nr;
@@ -2212,7 +2215,7 @@ void dbengine_stress_test(unsigned TEST_DURATION_SEC, unsigned DSET_CHARTS, unsi
     fprintf(stderr, "Query starting time is randomly chosen from the beginning of the time-series up to the time of\n"
                     "the latest data point, and ending time from 1 second up to 1 hour after the starting time.\n");
     fprintf(stderr, "Performance is %lu written data points/sec and %lu read data points/sec.\n",
-            stored_metrics_nr / (time_end - time_start), queried_metrics_nr / (time_end - time_start));
+            stored_metrics_nr / test_duration, queried_metrics_nr / test_duration);
 
     for (i = 0 ; i < DSET_CHARTS ; ++i) {
         freez(chart_threads[i]);
@@ -2222,9 +2225,10 @@ void dbengine_stress_test(unsigned TEST_DURATION_SEC, unsigned DSET_CHARTS, unsi
         freez(query_threads[i]);
     }
     freez(query_threads);
-    rrdeng_exit(host->rrdeng_ctx);
     rrd_wrlock();
+    rrdeng_prepare_exit(host->rrdeng_ctx);
     rrdhost_delete_charts(host);
+    rrdeng_exit(host->rrdeng_ctx);
     rrd_unlock();
 }
 

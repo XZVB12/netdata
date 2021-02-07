@@ -1,6 +1,6 @@
 <!--
 title: "Database engine"
-description: "The highly-efficient database engine stores per-second metrics in RAM and then spills historical metrics to disk long-term storage."
+description: "Netdata's highly-efficient database engine use both RAM and disk for distributed, long-term storage of per-second metrics."
 custom_edit_url: https://github.com/netdata/netdata/edit/master/database/engine/README.md
 -->
 
@@ -26,41 +26,67 @@ To use the database engine, open `netdata.conf` and set `memory mode` to `dbengi
     memory mode = dbengine
 ```
 
-To configure the database engine, look for the `page cache size` and `dbengine disk space` settings in the `[global]`
-section of your `netdata.conf`. The Agent ignores the `history` setting when using the database engine.
+To configure the database engine, look for the `page cache size` and `dbengine multihost disk space` settings in the
+`[global]` section of your `netdata.conf`. The Agent ignores the `history` setting when using the database engine.
 
 ```conf
 [global]
     page cache size = 32
-    dbengine disk space = 256
+    dbengine multihost disk space = 256
 ```
 
-The above values are the default and minimum values for Page Cache size and DB engine disk space quota. Both numbers are
+The above values are the default values for Page Cache size and DB engine disk space quota. Both numbers are
 in **MiB**.
 
 The `page cache size` option determines the amount of RAM in **MiB** dedicated to caching Netdata metric values. The
 actual page cache size will be slightly larger than this figure—see the [memory requirements](#memory-requirements)
 section for details.
 
-The `dbengine disk space` option determines the amount of disk space in **MiB** that is dedicated to storing Netdata
-metric values and all related metadata describing them.
+The `dbengine multihost disk space` option determines the amount of disk space in **MiB** that is dedicated to storing
+Netdata metric values and all related metadata describing them. You can use the [**database engine
+calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+to correctly set `dbengine multihost disk space` based on your metrics retention policy. The calculator gives an
+accurate estimate based on how many child nodes you have, how many metrics your Agent collects, and more.
 
-Use the  [**database engine calculator**](https://learn.netdata.cloud/docs/agent/database/calculator) to correctly set
-`dbengine disk space` based on your needs. The calculator gives an accurate estimate based on how many slave nodes you
-have, how many metrics your Agent collects, and more.
+### Legacy configuration
+
+The deprecated `dbengine disk space` option determines the amount of disk space in **MiB** that is dedicated to storing
+Netdata metric values per legacy database engine instance (see [details on the legacy mode](#legacy-mode) below).
+
+```conf
+[global]
+    dbengine disk space = 256
+```
 
 ### Streaming metrics to the database engine
 
-When streaming metrics, the Agent on the master node creates one instance of the database engine for itself, and another
-instance for every slave node it receives metrics from. If you have four streaming nodes, you will have five instances
-in total (`1 master + 4 slaves = 5 instances`).
+When using the multihost database engine, all parent and child nodes share the same `page cache size` and `dbengine
+multihost disk space` in a single dbengine instance. The [**database engine
+calculator**](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+helps you properly set `page cache size` and `dbengine multihost disk space` on your parent node to allocate enough
+resources based on your metrics retention policy and how many child nodes you have.
 
-The Agent allocates resources for each instance separately using the `dbengine disk space` setting. If `dbengine disk
-space` is set to the default `256`, each instance is given 256 MiB in disk space, which means the total disk space
-required to store all instances is, roughly, `256 MiB * 1 master * 4 slaves = 1280 MiB`. 
+#### Legacy mode
 
-See the [database engine calculator](https://learn.netdata.cloud/docs/agent/database/calculator) to help you correctly
-set `dbengine disk space` and undertand the toal disk space required based on your streaming setup.
+_For Netdata Agents earlier than v1.23.2_, the Agent on the parent node uses one dbengine instance for itself, and
+another instance for every child node it receives metrics from. If you had four streaming nodes, you would have five
+instances in total (`1 parent + 4 child nodes = 5 instances`).
+
+The Agent allocates resources for each instance separately using the `dbengine disk space` (**deprecated**) setting. If
+`dbengine disk space`(**deprecated**) is set to the default `256`, each instance is given 256 MiB in disk space, which
+means the total disk space required to store all instances is, roughly, `256 MiB * 1 parent * 4 child nodes = 1280 MiB`.
+
+#### Backward compatibility
+
+All existing metrics belonging to child nodes are automatically converted to legacy dbengine instances and the localhost
+metrics are transferred to the multihost dbengine instance.
+
+All new child nodes are automatically transferred to the multihost dbengine instance and share its page cache and disk
+space. If you want to migrate a child node from its legacy dbengine instance to the multihost dbengine instance, you
+must delete the instance's directory, which is located in `/var/cache/netdata/MACHINE_GUID/dbengine`, after stopping the
+Agent.
+
+##### Information
 
 For more information about setting `memory mode` on your nodes, in addition to other streaming configurations, see
 [streaming](/streaming/README.md).
@@ -70,8 +96,7 @@ For more information about setting `memory mode` on your nodes, in addition to o
 Using memory mode `dbengine` we can overcome most memory restrictions and store a dataset that is much larger than the
 available memory.
 
-There are explicit memory requirements **per** DB engine **instance**, meaning **per** Netdata **node** (e.g. localhost
-and streaming recipient nodes):
+There are explicit memory requirements **per** DB engine **instance**:
 
 -   The total page cache memory footprint will be an additional `#dimensions-being-collected x 4096 x 2` bytes over what
     the user configured with `page cache size`.
@@ -83,21 +108,30 @@ and streaming recipient nodes):
     -   for very highly compressible data (compression ratio > 90%) this RAM overhead is comparable to the disk space
         footprint.
 
-An important observation is that RAM usage depends on both the `page cache size` and the `dbengine disk space` options.
+An important observation is that RAM usage depends on both the `page cache size` and the `dbengine multihost disk space`
+options.
 
-You can use our [database engine calculator](https://learn.netdata.cloud/docs/agent/database/calculator) to
-validate the memory requirements for your particular system(s) and configuration.
+You can use our [database engine
+calculator](/docs/store/change-metrics-storage.md#calculate-the-system-resources-RAM-disk-space-needed-to-store-metrics)
+to validate the memory requirements for your particular system(s) and configuration (**out-of-date**).
+
+### Disk space requirements
+
+There are explicit disk space requirements **per** DB engine **instance**:
+
+-   The total disk space footprint will be the maximum between `#dimensions-being-collected x 4096 x 2` bytes or what
+    the user configured with `dbengine multihost disk space` or `dbengine disk space`.
 
 ### File descriptor requirements
 
-The Database Engine may keep a **significant** amount of files open per instance (e.g. per streaming slave or master
-server). When configuring your system you should make sure there are at least 50 file descriptors available per
+The Database Engine may keep a **significant** amount of files open per instance (e.g. per streaming child or
+parent server). When configuring your system you should make sure there are at least 50 file descriptors available per
 `dbengine` instance.
 
 Netdata allocates 25% of the available file descriptors to its Database Engine instances. This means that only 25% of
 the file descriptors that are available to the Netdata service are accessible by dbengine instances. You should take
 that into account when configuring your service or system-wide file descriptor limits. You can roughly estimate that the
-Netdata service needs 2048 file descriptors for every 10 streaming slave hosts when streaming is configured to use
+Netdata service needs 2048 file descriptors for every 10 streaming child hosts when streaming is configured to use
 `memory mode = dbengine`.
 
 If for example one wants to allocate 65536 file descriptors to the Netdata service on a systemd system one needs to
@@ -173,10 +207,10 @@ traffic so as to create the minimum possible interference with other application
 
 ## Evaluation
 
-We have evaluated the performance of the `dbengine` API that the netdata daemon uses internally. This is **not** the
-web API of netdata. Our benchmarks ran on a **single** `dbengine` instance, multiple of which can be running in a
-netdata master server. We used a server with an AMD Ryzen Threadripper 2950X 16-Core Processor and 2 disk drives, a
-Seagate Constellation ES.3 2TB magnetic HDD and a SAMSUNG MZQLB960HAJR-00007 960GB NAND Flash SSD.
+We have evaluated the performance of the `dbengine` API that the netdata daemon uses internally. This is **not** the web
+API of netdata. Our benchmarks ran on a **single** `dbengine` instance, multiple of which can be running in a Netdata
+parent node. We used a server with an AMD Ryzen Threadripper 2950X 16-Core Processor and 2 disk drives, a Seagate
+Constellation ES.3 2TB magnetic HDD and a SAMSUNG MZQLB960HAJR-00007 960GB NAND Flash SSD.
 
 For our workload, we defined 32 charts with 128 metrics each, giving us a total of 4096 metrics. We defined 1 worker
 thread per chart (32 threads) that generates new data points with a data generation interval of 1 second. The time axis

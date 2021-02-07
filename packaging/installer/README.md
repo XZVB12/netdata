@@ -1,8 +1,6 @@
 <!--
----
 title: "Installation guide"
 custom_edit_url: https://github.com/netdata/netdata/edit/master/packaging/installer/README.md
----
 -->
 
 # Installation guide
@@ -36,7 +34,8 @@ _actively_ contributing to Netdata's future.
 
 This method is fully automatic on all Linux distributions, including Ubuntu, Debian, Fedora, CentOS, and others.
 
-To install Netdata from source and get _automatic nightly updates_, run the following as your normal user:
+To install Netdata from source, including all dependencies required to connect to Netdata Cloud, and get _automatic
+nightly updates_, run the following as your normal user:
 
 ```bash
 bash <(curl -Ss https://my-netdata.io/kickstart.sh)
@@ -49,11 +48,16 @@ page](/packaging/installer/methods/kickstart.md).
 Scroll down for details about [automatic updates](#automatic-updates) or [nightly vs. stable
 releases](#nightly-vs-stable-releases).
 
-When you finish installing Netdata, be sure to visit our [step-by-step guide](/docs/guides/step-by-step/step-00.md) for
-a fully-guided tour into Netdata's capabilities and how to configure it according to your needs. 
+### Post-installation
 
-Or, if you're a monitoring and system administration pro, skip ahead to our [getting started
-guide](/docs/getting-started.md) for a quick overview.
+When you're finished with installation, check out our [single-node](/docs/quickstart/single-node.md) or
+[infrastructure](/docs/quickstart/infrastructure.md) monitoring quickstart guides based on your use case.
+
+Or, skip straight to [configuring the Netdata Agent](/docs/configure/nodes.md).
+
+Read through Netdata's [documentation](https://learn.netdata.cloud/docs), which is structured based on actions and
+solutions, to enable features like health monitoring, alarm notifications, long-term metrics storage, exporting to
+external databases, and more.
 
 ## Have a different operating system, or want to try another method?
 
@@ -82,8 +86,7 @@ Netdata on Docker](/packaging/docker/README.md)
 
 [![Install Netdata on
 Kubernetes](https://user-images.githubusercontent.com/1153921/76029478-cc8ad000-5ef1-11ea-8981-dd04744b00da.png) Install
-Netdata on Kubernetes with a Helm
-chart](https://github.com/netdata/helmchart#netdata-helm-chart-for-kubernetes-deployments)
+Netdata on a Kubernetes cluster](/packaging/installer/methods/kubernetes.md)
 
 [![Install Netdata on cloud providers
 (GCP/AWS/Azure)](https://user-images.githubusercontent.com/1153921/76029431-aebd6b00-5ef1-11ea-92b4-06704dabb93e.png)
@@ -97,9 +100,9 @@ Netdata on macOS](/packaging/installer/methods/macos.md)
 FreeBSD](https://user-images.githubusercontent.com/1153921/76029787-5fc40580-5ef2-11ea-9461-23e9049aa8f8.png) Install
 Netdata on FreeBSD](/packaging/installer/methods/freebsd.md)
 
-[![Install manually from
-source](https://user-images.githubusercontent.com/1153921/73032280-f1246000-3dfb-11ea-870d-7fbddd9a6f76.png) Install
-manually from source](/packaging/installer/methods/manual.md)
+[![Install from a Git
+checkout](https://user-images.githubusercontent.com/1153921/73032280-f1246000-3dfb-11ea-870d-7fbddd9a6f76.png) Install
+from a Git checkout](/packaging/installer/methods/manual.md)
 
 [![Install on offline/air-gapped
 systems](https://user-images.githubusercontent.com/1153921/73032239-c89c6600-3dfb-11ea-8224-c8a9f7a50c53.png) Install on
@@ -121,6 +124,10 @@ installation on FreeNAS](/packaging/installer/methods/freenas.md)
 Alpine](https://user-images.githubusercontent.com/1153921/76029682-37d4a200-5ef2-11ea-9a2c-a8ffeb1d13c3.png) Manual
 installation on Alpine](/packaging/installer/methods/alpine.md)
 
+[![Build manually from
+source](https://user-images.githubusercontent.com/1153921/73032280-f1246000-3dfb-11ea-870d-7fbddd9a6f76.png)
+Build manually from source](/packaging/installer/methods/source.md)
+
 </div>
 
 ## Automatic updates
@@ -137,6 +144,17 @@ bash <(curl -Ss https://my-netdata.io/kickstart.sh) --no-updates
 
 With automatic updates disabled, you can choose exactly when and how you [update
 Netdata](/packaging/installer/UPDATE.md).
+
+### Network usage of Netdata’s automatic updater
+
+The auto-update functionality set up by the installation scripts requires working internet access to function
+correctly. In particular, it currently requires access to GitHub (to check if a newer version of the updater script
+is available or not, as well as potentially fetching build-time dependencies that are bundled as part of the install),
+and Google Cloud Storage (to check for newer versions of Netdata and download the sources if there is a newer version).
+
+Note that the auto-update functionality will check for updates to itself independently of updates to Netdata,
+and will try to use the latest version of the updater script whenever possible. This is intended to reduce the
+amount of effort required by users to get updates working again in the event of a bug in the updater code.
 
 ## Nightly vs. stable releases
 
@@ -166,7 +184,7 @@ the community helps fix any bugs that might have been introduced in previous rel
     installation
 -   Retain more control over the Netdata version you use
 
-## Installation notes and known issues
+## Troubleshooting and known issues
 
 We are tracking a few issues related to installation and packaging.
 
@@ -190,6 +208,33 @@ To install the Agent on certain CentOS and RHEL systems, you must enable non-def
 PowerTools, to gather hard dependencies. See the [CentOS 6](/packaging/installer/methods/manual.md#centos-rehel-6-x) and
 [CentOS 8](/packaging/installer/methods/manual.md#centos-rehel-8-x) sections for more information.
 
+### Access to file is not permitted
+
+If you see an error similar to `Access to file is not permitted: /usr/share/netdata/web//index.html` when you try to
+visit the Agent dashboard at `http://NODE:19999`, you need to update Netdata's permissions to match those of your
+system.
+
+Run `ls -la /usr/share/netdata/web/index.html` to find the file's permissions. You may need to change this path based on
+the error you're seeing in your browser. In the below example, the file is owned by the user `netdata` and the group
+`netdata`.
+
+```bash
+ls -la /usr/share/netdata/web/index.html
+-rw-r--r--. 1 netdata netdata 89377 May  5 06:30 /usr/share/netdata/web/index.html
+```
+
+Open your `netdata.conf` file and find the `[web]` section, plus the `web files owner`/`web files group` settings. Edit
+the lines to match the output from `ls -la` above and uncomment them if necessary.
+
+```conf
+[web]
+    web files owner = netdata
+    web files group = netdata
+```
+
+Save the file, [restart the Netdata Agent](/docs/getting-started.md#start-stop-and-restart-netdata), and try accessing
+the dashboard again.
+
 ### Multiple versions of OpenSSL
 
 We've received reports from the community about issues with running the `kickstart.sh` script on systems that have both
@@ -204,3 +249,5 @@ issue altogether. Or, you can manually remove one version of OpenSSL to remove t
 Our current build process has some issues when using certain configurations of the `clang` C compiler on Linux. See [the
 section on `nonrepresentable section on output`
 errors](/packaging/installer/methods/manual.md#nonrepresentable-section-on-output-errors) for a workaround.
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fpackaging%2Finstaller%2FREADME&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)

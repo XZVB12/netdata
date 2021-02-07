@@ -1,9 +1,7 @@
 <!--
----
 title: "Get started guide"
 date: 2020-05-04
 custom_edit_url: https://github.com/netdata/netdata/edit/master/docs/getting-started.md
----
 -->
 
 # Get started guide
@@ -67,9 +65,9 @@ configuration keeps RAM usage low while allowing for long-term, on-disk metrics 
 You can tweak this custom _database engine_ to store a much larger dataset than your system's available RAM,
 particularly if you allow Netdata to use slightly more RAM and disk space than the default configuration.
 
-Read our guide on [changing how long Netdata stores metrics](/docs/guides/longer-metrics-storage.md) to learn more
-and use our [database engine calculator](https://learn.netdata.cloud/docs/agent/database/calculator) to figure
-out the exact settings you'll need to store historical metrics right in the Agent's database.
+Read our guide on [changing how long Netdata stores metrics](/docs/store/change-metrics-storage.md) to learn more and
+use our the embedded database engine to figure out the exact settings you'll need to store historical metrics right in
+the Agent's database.
 
 **What's next?**:
 
@@ -157,7 +155,7 @@ changes based on your particular Nginx setup.
 
 -   Look at the [full list of data collection modules](/collectors/COLLECTORS.md)
     to configure your sources for auto-detection and monitoring.
--   Improve the [performance](/docs/Performance.md) of Netdata on low-memory systems.
+-   Improve the [performance](/docs/guides/configure/performance.md) of Netdata on low-memory systems.
 -   Configure `systemd` to expose [systemd services
     utilization](/collectors/cgroups.plugin/README.md#monitoring-systemd-services) metrics automatically.
 -   [Reconfigure individual charts](/daemon/config/README.md#per-chart-configuration) in `netdata.conf`.
@@ -193,30 +191,20 @@ Find the `SEND_EMAIL="YES"` line and change it to `SEND_EMAIL="NO"`.
 ## Monitor multiple systems with Netdata Cloud
 
 If you have the Agent installed on multiple nodes, you can use Netdata Cloud in two ways: Monitor the health and
-performance of an entire infrastructure via the Cloud web interface, or use the Visited Nodes menu that's built into
-every dashboard.
+performance of an entire infrastructure via the Netdata Cloud web application, or use the Visited Nodes menu that's
+built into every dashboard.
 
-For example, a small infrastructure monitored via Netdata Cloud:
-
-![Animated GIF of Netdata
-Cloud](https://user-images.githubusercontent.com/1153921/80828986-1ebb3b00-8b9b-11ea-957f-2c8d0d009e44.gif)
-
-And the process of using the Visited nodes menu to move between Agent dashboards running on various systems, both local
-and remote:
-
-![Switching between dashboards with Visited
-nodes](https://user-images.githubusercontent.com/1153921/80831018-e158ac80-8b9e-11ea-882e-1d82cdc028cd.gif)
+![The War Room
+Overview](https://user-images.githubusercontent.com/1153921/102651377-b1f4b100-4129-11eb-8e60-d2995d258c16.png)
 
 You can use these features together or separately&mdash;the decision is up to you and the needs of your infrastructure.
 
 **What's next?**:
 
--   Read about the [Agent-Cloud integration]().
--   Get an overview of Cloud's features by reading [Cloud documentation](https://learn.netdata.cloud/docs/cloud/).
--   Follow the 5-minute [get started with Cloud](https://learn.netdata.cloud/docs/cloud/get-started/) guide to finish
-    onboarding and claim your first nodes.
--   Better understand how agents connect securely to the Cloud with [claiming](/claim/README.md) and [Agent-Cloud
-    link](/aclk/README.md) documentation.
+-   Sign up for [Netdata Cloud](https://app.netdata.cloud).
+-   Read the [infrastructure monitoring quickstart](/docs/quickstart/infrastructure.md).
+-   Better understand how the Netdata Agent connects securely to Netdata Cloud with [claiming](/claim/README.md) and
+    [Agent-Cloud link](/aclk/README.md) documentation.
 
 ## Start, stop, and restart Netdata
 

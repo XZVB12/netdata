@@ -2,7 +2,7 @@
 
 #ifdef ENABLE_HTTPS
 
-SSL_CTX *netdata_opentsdb_ctx=NULL;
+SSL_CTX *netdata_exporting_ctx=NULL;
 SSL_CTX *netdata_client_ctx=NULL;
 SSL_CTX *netdata_srv_ctx=NULL;
 const char *security_key=NULL;
@@ -201,7 +201,7 @@ static SSL_CTX * security_initialize_openssl_server() {
  * @param selector informs the context that must be initialized, the following list has the valid values:
  *      NETDATA_SSL_CONTEXT_SERVER - the server context
  *      NETDATA_SSL_CONTEXT_STREAMING - Starts the streaming context.
- *      NETDATA_SSL_CONTEXT_OPENTSDB - Starts the OpenTSDB contextv
+ *      NETDATA_SSL_CONTEXT_EXPORTING - Starts the OpenTSDB contextv
  */
 void security_start_ssl(int selector) {
     switch (selector) {
@@ -222,8 +222,8 @@ void security_start_ssl(int selector) {
             SSL_CTX_set_mode(netdata_client_ctx, SSL_MODE_ENABLE_PARTIAL_WRITE |SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |SSL_MODE_AUTO_RETRY);
             break;
         }
-        case NETDATA_SSL_CONTEXT_OPENTSDB: {
-            netdata_opentsdb_ctx = security_initialize_openssl_client();
+        case NETDATA_SSL_CONTEXT_EXPORTING: {
+            netdata_exporting_ctx = security_initialize_openssl_client();
             break;
         }
     }
@@ -234,20 +234,18 @@ void security_start_ssl(int selector) {
  *
  * Clean all the allocated contexts from netdata.
  */
-void security_clean_openssl() {
-	if (netdata_srv_ctx)
-	{
-		SSL_CTX_free(netdata_srv_ctx);
-	}
+void security_clean_openssl()
+{
+    if (netdata_srv_ctx) {
+        SSL_CTX_free(netdata_srv_ctx);
+    }
 
-    if (netdata_client_ctx)
-    {
+    if (netdata_client_ctx) {
         SSL_CTX_free(netdata_client_ctx);
     }
 
-    if ( netdata_opentsdb_ctx )
-    {
-        SSL_CTX_free(netdata_opentsdb_ctx);
+    if (netdata_exporting_ctx) {
+        SSL_CTX_free(netdata_exporting_ctx);
     }
 
 #if OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
@@ -316,7 +314,7 @@ int security_process_accept(SSL *ssl,int msg) {
 /**
  * Test Certificate
  *
- * Check the certificate of Netdata master
+ * Check the certificate of Netdata parent
  *
  * @param ssl is the connection structure
  *
@@ -348,10 +346,10 @@ int security_test_certificate(SSL *ssl) {
  * Location for context
  *
  * Case the user give us a directory with the certificates available and
- * the Netdata master certificate, we use this function to validate the certificate.
+ * the Netdata parent certificate, we use this function to validate the certificate.
  *
  * @param ctx the context where the path will be set.
- * @param file the file with Netdata master certificate.
+ * @param file the file with Netdata parent certificate.
  * @param path the directory where the certificates are stored.
  *
  * @return It returns 0 on success and -1 otherwise.
@@ -359,7 +357,7 @@ int security_test_certificate(SSL *ssl) {
 int security_location_for_context(SSL_CTX *ctx, char *file, char *path) {
     struct stat statbuf;
     if (stat(file, &statbuf)) {
-        info("Netdata does not have a SSL master certificate, so it will use the default OpenSSL configuration to validate certificates!");
+        info("Netdata does not have the parent's SSL certificate, so it will use the default OpenSSL configuration to validate certificates!");
         return 0;
     }
 
@@ -379,7 +377,7 @@ int security_location_for_context(SSL_CTX *ctx, char *file, char *path) {
 slfc:
     while ((err = ERR_get_error()) != 0) {
         ERR_error_string_n(err, buf, sizeof(buf));
-        error("Cannot set the directory for the certificates and the master SSL certificate: %s",buf);
+        error("Cannot set the directory for the certificates and the parent SSL certificate: %s",buf);
     }
     return -1;
 }

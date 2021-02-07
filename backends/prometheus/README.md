@@ -1,8 +1,6 @@
 <!--
----
 title: "Using Netdata with Prometheus"
 custom_edit_url: https://github.com/netdata/netdata/edit/master/backends/prometheus/README.md
----
 -->
 
 # Using Netdata with Prometheus
@@ -356,7 +354,7 @@ For more information check prometheus documentation.
 
 ### Streaming data from upstream hosts
 
-The `format=prometheus` parameter only exports the host's Netdata metrics. If you are using the master/slave
+The `format=prometheus` parameter only exports the host's Netdata metrics. If you are using the parent-child
 functionality of Netdata this ignores any upstream hosts - so you should consider using the below in your
 **prometheus.yml**:
 

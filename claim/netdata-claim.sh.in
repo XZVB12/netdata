@@ -83,6 +83,8 @@ ERROR_MESSAGES[16]="Gateway Timeout"
 ERROR_KEYS[17]="ErrServiceUnavailable"
 ERROR_MESSAGES[17]="Service Unavailable"
 
+# Exit code: 18 - Agent unique id is not generated yet.
+
 get_config_value() {
     conf_file="${1}"
     section="${2}"
@@ -142,6 +144,10 @@ NETDATA_USER=$(get_config_value netdata global "run as user")
 # get the MACHINE_GUID by default
 if [ -r "${MACHINE_GUID_FILE}" ]; then
         ID="$(cat "${MACHINE_GUID_FILE}")"
+        MGUID=$ID
+else
+        echo >&2 "netdata.public.unique.id is not generated yet or not readable. Please run agent at least once before attempting to claim. Agent generates this file on first startup. If the ID is generated already make sure you have rights to read it (Filename: ${MACHINE_GUID_FILE})."
+        exit 18
 fi
 
 # get token from file
@@ -236,7 +242,8 @@ cat > "${CLAIMING_DIR}/tmpin.txt" <<EMBED_JSON
     },
     "token": "$TOKEN",
     "rooms" : [ $ROOMS ],
-    "publicKey" : "$KEY"
+    "publicKey" : "$KEY",
+    "mGUID" : "$MGUID"
 }
 EMBED_JSON
 
@@ -282,26 +289,45 @@ fi
 if [ "${VERBOSE}" == 1 ]; then
     echo "${URLCOMMAND} \"${TARGET_URL}\""
 fi
-eval "${URLCOMMAND} \"${TARGET_URL}\"" >"${CLAIMING_DIR}/tmpout.txt"
-URLCOMMAND_EXIT_CODE=$?
-if [ "${URLTOOL}" = "wget" ] && [ "${URLCOMMAND_EXIT_CODE}" -eq 8 ] ; then
-# We consider the server issuing an error response a successful attempt at communicating
-        URLCOMMAND_EXIT_CODE=0
-fi
+
+attempt_contact () {
+        eval "${URLCOMMAND} \"${TARGET_URL}\"" >"${CLAIMING_DIR}/tmpout.txt"
+        URLCOMMAND_EXIT_CODE=$?
+        if [ "${URLTOOL}" = "wget" ] && [ "${URLCOMMAND_EXIT_CODE}" -eq 8 ] ; then
+        # We consider the server issuing an error response a successful attempt at communicating
+                URLCOMMAND_EXIT_CODE=0
+        fi
+
+        # Check if URLCOMMAND connected and received reply
+        if [ "${URLCOMMAND_EXIT_CODE}" -ne 0 ] ; then
+                echo >&2 "Failed to connect to ${URL_BASE}, return code ${URLCOMMAND_EXIT_CODE}"
+                rm -f "${CLAIMING_DIR}/tmpout.txt"
+                return 4
+        fi
+
+        if [ "${VERBOSE}" == 1 ] ; then
+            echo "Response from server:"
+            cat "${CLAIMING_DIR}/tmpout.txt"
+        fi
+
+        return 0
+}
+
+for i in {1..5}
+do
+        if attempt_contact ; then
+                echo "Connection attempt $i successful"
+                break
+        fi
+        echo "Connection attempt $i failed. Retry in ${i}s."
+        if [ "$i" -eq 5 ] ; then
+                rm -f "${CLAIMING_DIR}/tmpin.txt"
+                exit 4
+        fi
+        sleep "$i"
+done
 
 rm -f "${CLAIMING_DIR}/tmpin.txt"
-
-# Check if URLCOMMAND connected and received reply
-if [ "${URLCOMMAND_EXIT_CODE}" -ne 0 ] ; then
-        echo >&2 "Failed to connect to ${URL_BASE}, return code ${URLCOMMAND_EXIT_CODE}"
-        rm -f "${CLAIMING_DIR}/tmpout.txt"
-        exit 4
-fi
-
-if [ "${VERBOSE}" == 1 ] ; then
-    echo "Response from server:"
-    cat "${CLAIMING_DIR}/tmpout.txt"
-fi
 
 ERROR_KEY=$(grep "\"errorMsgKey\":" "${CLAIMING_DIR}/tmpout.txt" | awk -F "errorMsgKey\":\"" '{print $2}' | awk -F "\"" '{print $1}')
 case ${ERROR_KEY} in

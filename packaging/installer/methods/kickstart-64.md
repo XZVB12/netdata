@@ -1,8 +1,7 @@
 <!--
----
 title: "Install Netdata with kickstart-static64.sh"
+description: "The kickstart-static64.sh script installs a pre-compiled static binary, including all dependencies required to connect to Netdata Cloud, with one command."
 custom_edit_url: https://github.com/netdata/netdata/edit/master/packaging/installer/methods/kickstart-64.md
----
 -->
 
 # Install Netdata with kickstart-static64.sh
@@ -14,7 +13,8 @@ This page covers detailed instructions on using and configuring the installation
 This method uses a pre-compiled static binary to install Netdata on any Intel/AMD 64bit Linux system and on any Linux
 distribution, even those with a broken or unsupported package manager.
 
-To install Netdata from a binary package and get _automatic nightly updates_, run the following as your normal user:
+To install Netdata from a static binary package, including all dependencies required to connect to Netdata Cloud, and
+get _automatic nightly updates_, run the following as your normal user:
 
 ```bash
 bash <(curl -Ss https://my-netdata.io/kickstart-static64.sh)
@@ -30,15 +30,14 @@ bash <(curl -Ss https://my-netdata.io/kickstart-static64.sh)
 
 The `kickstart.sh` script does the following after being downloaded and run:
 
--   Detects the Linux distribution and **installs the required system packages** for building Netdata. Unless you added
-    the `--dont-wait` option, it will ask for your permission first.
+-   Checks to see if there is an existing installation, and if there is updates that in preference to reinstalling.
 -   Downloads the latest Netdata binary from the [binary-packages](https://github.com/netdata/binary-packages)
     repository. You can also run any of these `.run` files with [makeself](https://github.com/megastep/makeself).
 -   Installs Netdata by running `./netdata-installer.sh` from the source tree, including any options you might have
     added.
 -   Installs `netdata-updater.sh` to `cron.daily` to enable automatic updates, unless you added the `--no-updates`
     option.
--   Prints a message about whether the insallation succeeded for failed for QA purposes.
+-   Prints a message about whether the installation succeeded for failed for QA purposes.
 
 If your shell fails to handle the above one-liner, you can download and run the `kickstart-static64.sh` script manually.
 
@@ -65,6 +64,8 @@ your installation. Here are a few important parameters:
 -   `--disable-telemetry`: Opt-out of [anonymous statistics](/docs/anonymous-statistics.md) we use to make
     Netdata better.
 -   `--no-updates`: Prevent automatic updates of any kind.
+-   `--reinstall`: If an existing installation is detected, reinstall instead of attempting to update it. Note
+    that this cannot be used to switch between installation types.
 -   `--local-files`: Used for [offline installations](/packaging/installer/methods/offline.md). Pass four file paths:
     the Netdata tarball, the checksum file, the go.d plugin tarball, and the go.d plugin config tarball, to force
     kickstart run the process using those files. This option conflicts with the `--stable-channel` option. If you set
@@ -72,19 +73,24 @@ your installation. Here are a few important parameters:
 
 ## Verify script integrity
 
-To use `md5sum` to verify the intregity of the `kickstart-static64.sh` script you will download using the one-line
+To use `md5sum` to verify the integrity of the `kickstart-static64.sh` script you will download using the one-line
 command above, run the following:
 
 ```bash
-[ "ff717737ccc2212a3363dad7fa8bd20d" = "$(curl -Ss https://my-netdata.io/kickstart-static64.sh | md5sum | cut -d ' ' -f 1)" ] && echo "OK, VALID" || echo "FAILED, INVALID"
+[ "047c86a7c8905955bee39b6980a28e30" = "$(curl -Ss https://my-netdata.io/kickstart-static64.sh | md5sum | cut -d ' ' -f 1)" ] && echo "OK, VALID" || echo "FAILED, INVALID"
 ```
 
 If the script is valid, this command will return `OK, VALID`.
 
 ## What's next?
 
-When you finish installing Netdata, be sure to visit our [step-by-step guide](/docs/guides/step-by-step/step-00.md) for
-a fully-guided tour into Netdata's capabilities and how to configure it according to your needs. 
+When you're finished with installation, check out our [single-node](/docs/quickstart/single-node.md) or
+[infrastructure](/docs/quickstart/infrastructure.md) monitoring quickstart guides based on your use case.
 
-Or, if you're a monitoring and system administration pro, skip ahead to our [getting started
-guide](/docs/getting-started.md) for a quick overview.
+Or, skip straight to [configuring the Netdata Agent](/docs/configure/nodes.md).
+
+Read through Netdata's [documentation](https://learn.netdata.cloud/docs), which is structured based on actions and
+solutions, to enable features like health monitoring, alarm notifications, long-term metrics storage, exporting to
+external databases, and more.
+
+[![analytics](https://www.google-analytics.com/collect?v=1&aip=1&t=pageview&_s=1&ds=github&dr=https%3A%2F%2Fgithub.com%2Fnetdata%2Fnetdata&dl=https%3A%2F%2Fmy-netdata.io%2Fgithub%2Fpackaging%2Finstaller%2Fmethods%2Fkickstart-64&_u=MAC~&cid=5792dfd7-8dc4-476b-af31-da2fdb9f93d2&tid=UA-64295674-3)](<>)
